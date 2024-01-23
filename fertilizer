@@ -1,0 +1,129 @@
+#!/bin/bash
+
+query() {
+  CMD="${CHAIND} $@ --node ${RPC_ENDPOINT} --home $CHAIND_HOME"
+  bash -c "$CMD"
+}
+
+tx() {
+  CMD="${CHAIND} $@ --keyring-backend test --node ${RPC_ENDPOINT} --chain-id ${CHAIN_ID} --gas-prices ${GAS_PRICE} --gas auto --gas-adjustment ${GAS_ADJUSTMENT} --home ${CHAIND_HOME} --output json -y"
+  TX_ID=$(bash -c "$CMD" | jq -r .txhash)
+  echo "$(date '+%Y-%m-%d %H:%M:%S') $TX_ID" >> $HISTORY
+  sleep 5
+  echo "{}" | jq '.tx_id="'$TX_ID'" | .logs='"$(query query tx $TX_ID -o json | jq .logs)"
+}
+
+GAS_PRICE=$(jq .gas_price fertilizer.json -r)
+GAS_ADJUSTMENT=$(jq .gas_adjustment fertilizer.json -r)
+CHAIN_ID=$(jq .chain_id fertilizer.json -r)
+RPC_ENDPOINT=$(jq .rpc_endpoint fertilizer.json -r)
+FAUCET_DENOM=$(jq .faucet_denom fertilizer.json -r)
+FAUCET_ENDPOINT=$(jq .faucet_endpoint fertilizer.json -r)
+CHAIND=$(jq .chaind fertilizer.json -r)
+# CONFIGJSON="{\"gas_price\":\"\",\"gas_adjustment\":\"\",\"chain_id\":\"\",\"rpc_endpoint\":\"\",\"faucet_denom\":\"\",\"faucet_endpoint\":\"\",\"chaind\":\"\",\"accounts\":[{\"name\":\"\",\"mnemonic\":\"\"}]}"
+
+CHAIND_HOME=$HOME/.fertilizer/$CHAIN_ID
+HISTORY=$CHAIND_HOME/history.txt
+STATE=.fertilizer/state.json
+mkdir -p .fertilizer
+mkdir -p $CHAIND_HOME
+touch $STATE
+touch $HISTORY
+
+case $1 in
+  "history")
+    tail $HISTORY -n 20
+    ;;
+  "faucet")
+    ADDRESS=$(${CHAIND} keys show $2 --keyring-backend test -a)
+    curl -s --header "Content-Type: application/json" \
+      --request POST \
+      --data '{"denom":"'${FAUCET_DENOM}'","address":"'${ADDRESS}'"}' \
+      ${FAUCET_ENDPOINT} > /dev/null
+    query query bank balances ${ADDRESS}
+    ;;
+  "new")
+    cargo generate --git https://github.com/Finschia/cw-workspace.git
+    ;;
+  "wasm")
+    case $2 in
+      "new")
+        cargo generate --git https://github.com/Finschia/cw-workspace.git contracts --destination ./contracts
+        ;;
+      "build")
+        cargo check
+        docker run --rm -v "$(pwd)":/code \
+          --mount type=volume,source="$(basename "$(pwd)")_cache",target=/code/target \
+          --mount type=volume,source=registry_cache,target=/usr/local/cargo/registry \
+          cosmwasm/rust-optimizer-arm64:0.13.0
+        ;;
+      "store")
+        WASM_NAME=$3
+        shift;shift;shift
+        TXLOG=$(tx tx wasm store $PWD/artifacts/$WASM_NAME.wasm $@)
+        echo $TXLOG | jq .
+        CODE_ID=$(echo "$TXLOG" | jq '.logs[0].events[] | select (.type = "store_code").attributes[] | select (.key == "code_id").value' -r)
+        cat $STATE | jq ".\"${CHAIN_ID}\".\"${WASM_NAME}\".code_id=${CODE_ID}" > $STATE
+        ;;
+      "instantiate")
+        WASM_NAME=$3
+        WASM_CODE_ID=$(jq ".\"${CHAIN_ID}\".\"${WASM_NAME}\".code_id" $STATE)
+        WASM_MSG=$4
+        shift;shift;shift;shift
+        tx tx wasm instantiate ${WASM_CODE_ID} \'${WASM_MSG}\' $@
+        ;;
+      "execute")
+        WASM_NAME=$3
+        WASM_ADDRESS=$(jq ".\"${CHAIN_ID}\".\"${WASM_NAME}\".addresses.default" $STATE)
+        WASM_MSG=$4
+        shift;shift;shift;shift
+        tx tx wasm execute ${WASM_ADDRESS} \'${WASM_MSG}\' $@
+        ;;
+      "query")
+        WASM_NAME=$3
+        WASM_ADDRESS=$(jq ".\"${CHAIN_ID}\".\"${WASM_NAME}\".addresses.default" $STATE)
+        WASM_MSG=$4
+        shift;shift;shift;shift
+        query query wasm contract-state smart ${WASM_ADDRESS} \'${WASM_MSG}\' $@
+        ;;
+      *)
+        echo '
+Available Commands:
+  new
+  build
+  store
+  instantiate
+  execute
+  query
+'
+        ;;
+    esac
+    ;;
+  "tx")
+    tx $@
+    ;;
+  "query")
+    query $@
+    ;;
+  "keys")
+    ${CHAIND} $@ --keyring-backend test --home $CHAIND_HOME
+    ;;
+  "add-genesis-account"|"collect-gentxs"|"config"|"debug"|"export"|"gentx"|"init"|"ostracon"|"prune"|"rollback"|"rosetta"|"start"|"status"|"testnet"|"validate-genesis"|"version")
+    ${CHAIND} $@
+    ;;
+  *)
+    ${CHAIND} help
+    echo '
+Extended Chain Commands
+
+Usage:
+  fertilizer [command]
+
+Available Commands:
+  faucet          Get token from faucet
+  new             Generate contract workspace template
+  wasm            Operate wasm
+  history         Show transaction list
+'
+    ;;
+esac
