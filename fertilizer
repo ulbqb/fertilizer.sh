@@ -1,34 +1,47 @@
 #!/bin/bash
 
 query() {
-  CMD="${CHAIND} $@ --node ${RPC_ENDPOINT} --home $CHAIND_HOME"
+  CMD="${CHAIND} $@ --node ${RPC_ENDPOINT} --home $TMP_HOME"
   bash -c "$CMD"
 }
 
 tx() {
-  CMD="${CHAIND} $@ --keyring-backend test --node ${RPC_ENDPOINT} --chain-id ${CHAIN_ID} --gas-prices ${GAS_PRICE} --gas auto --gas-adjustment ${GAS_ADJUSTMENT} --home ${CHAIND_HOME} --output json -y"
+  CMD="${CHAIND} $@ --keyring-backend test --node ${RPC_ENDPOINT} --chain-id ${CHAIN_ID} --gas-prices ${GAS_PRICE} --gas auto --gas-adjustment ${GAS_ADJUSTMENT} --home ${TMP_HOME} --output json -y"
   TX_ID=$(bash -c "$CMD" | jq -r .txhash)
   echo "$(date '+%Y-%m-%d %H:%M:%S') $TX_ID" >> $HISTORY
   sleep 5
   echo "{}" | jq '.tx_id="'$TX_ID'" | .logs='"$(query query tx $TX_ID -o json | jq .logs)"
 }
 
-GAS_PRICE=$(jq .gas_price fertilizer.json -r)
-GAS_ADJUSTMENT=$(jq .gas_adjustment fertilizer.json -r)
-CHAIN_ID=$(jq .chain_id fertilizer.json -r)
-RPC_ENDPOINT=$(jq .rpc_endpoint fertilizer.json -r)
-FAUCET_DENOM=$(jq .faucet_denom fertilizer.json -r)
-FAUCET_ENDPOINT=$(jq .faucet_endpoint fertilizer.json -r)
-CHAIND=$(jq .chaind fertilizer.json -r)
+NETWORK=default
+GAS_PRICE=$(jq .$NETWORK.gas_price fertilizer.json -r)
+GAS_ADJUSTMENT=$(jq .$NETWORK.gas_adjustment fertilizer.json -r)
+CHAIN_ID=$(jq .$NETWORK.chain_id fertilizer.json -r)
+RPC_ENDPOINT=$(jq .$NETWORK.rpc_endpoint fertilizer.json -r)
+FAUCET_DENOM=$(jq .$NETWORK.faucet_denom fertilizer.json -r)
+FAUCET_ENDPOINT=$(jq .$NETWORK.faucet_endpoint fertilizer.json -r)
+CHAIND=$(jq .$NETWORK.chaind fertilizer.json -r)
+ACCOUNT_NAME=$(jq .$NETWORK.accounts[0].name fertilizer.json -r)
+ACCOUNT_MNEMONIC=$(jq .$NETWORK.accounts[0].mnemonic fertilizer.json -r)
+WORKSPACE_TMPL=https://github.com/Finschia/cw-workspace.git
+CONTRACTS_TMPL=$(jq .$NETWORK.accounts[0].contract_tmplate fertilizer.json -r)
 # CONFIGJSON="{\"gas_price\":\"\",\"gas_adjustment\":\"\",\"chain_id\":\"\",\"rpc_endpoint\":\"\",\"faucet_denom\":\"\",\"faucet_endpoint\":\"\",\"chaind\":\"\",\"accounts\":[{\"name\":\"\",\"mnemonic\":\"\"}]}"
 
 CHAIND_HOME=$HOME/.fertilizer/$CHAIN_ID
+TMP_HOME=$CHAIND_HOME/tmp
 HISTORY=$CHAIND_HOME/history.txt
 STATE=.fertilizer/state.json
+
+# Initialization
+rm -rf $TMP_HOME
 mkdir -p .fertilizer
 mkdir -p $CHAIND_HOME
-touch $STATE
+mkdir -p $TMP_HOME
+if [ ! -f "$STATE" ]; then
+    echo "{}" > $STATE
+fi
 touch $HISTORY
+${CHAIND} keys add $ACCOUNT_NAME --keyring-backend test --home $TMP_HOME --recover <<< $ACCOUNT_MNEMONIC &> /dev/null
 
 case $1 in
   "history")
@@ -43,12 +56,12 @@ case $1 in
     query query bank balances ${ADDRESS}
     ;;
   "new")
-    cargo generate --git https://github.com/Finschia/cw-workspace.git
+    cargo generate --git $WORKSPACE_TMPL
     ;;
   "wasm")
     case $2 in
       "new")
-        cargo generate --git https://github.com/Finschia/cw-workspace.git contracts --destination ./contracts
+        cargo generate --git $CONTRACTS_TMPL --destination ./contracts
         ;;
       "build")
         cargo check
@@ -60,17 +73,22 @@ case $1 in
       "store")
         WASM_NAME=$3
         shift;shift;shift
-        TXLOG=$(tx tx wasm store $PWD/artifacts/$WASM_NAME.wasm $@)
-        echo $TXLOG | jq .
-        CODE_ID=$(echo "$TXLOG" | jq '.logs[0].events[] | select (.type = "store_code").attributes[] | select (.key == "code_id").value' -r)
-        cat $STATE | jq ".\"${CHAIN_ID}\".\"${WASM_NAME}\".code_id=${CODE_ID}" > $STATE
+        TX_LOG=$(tx tx wasm store $PWD/artifacts/$WASM_NAME.wasm $@)
+        echo $TX_LOG | jq .
+        CODE_ID=$(echo "$TX_LOG" | jq '.logs[0].events[] | select (.type = "store_code").attributes[] | select (.key == "code_id").value' -r)
+        STATE_JSON=$(cat $STATE)
+        echo $STATE_JSON | jq ".\"${CHAIN_ID}\".\"${WASM_NAME}\".code_id=${CODE_ID}" > $STATE
         ;;
       "instantiate")
         WASM_NAME=$3
         WASM_CODE_ID=$(jq ".\"${CHAIN_ID}\".\"${WASM_NAME}\".code_id" $STATE)
         WASM_MSG=$4
         shift;shift;shift;shift
-        tx tx wasm instantiate ${WASM_CODE_ID} \'${WASM_MSG}\' $@
+        TX_LOG=$(tx tx wasm instantiate ${WASM_CODE_ID} \'${WASM_MSG}\' $@)
+        echo $TX_LOG | jq .
+        CONTRACT_ADDRESS=$(echo "$TX_LOG" | jq '.logs[0].events[] | select (.type = "instantiate").attributes[] | select (.key == "_contract_address").value' -r)
+        STATE_JSON=$(cat $STATE)
+        echo $STATE_JSON | jq ".\"${CHAIN_ID}\".\"${WASM_NAME}\".addresses.default=\"${CONTRACT_ADDRESS}\"" > $STATE
         ;;
       "execute")
         WASM_NAME=$3
@@ -106,7 +124,7 @@ Available Commands:
     query $@
     ;;
   "keys")
-    ${CHAIND} $@ --keyring-backend test --home $CHAIND_HOME
+    ${CHAIND} $@ --keyring-backend test --home $TMP_HOME
     ;;
   "add-genesis-account"|"collect-gentxs"|"config"|"debug"|"export"|"gentx"|"init"|"ostracon"|"prune"|"rollback"|"rosetta"|"start"|"status"|"testnet"|"validate-genesis"|"version")
     ${CHAIND} $@
