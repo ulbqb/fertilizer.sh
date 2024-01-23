@@ -24,8 +24,8 @@ CHAIND=$(jq .$NETWORK.chaind fertilizer.json -r)
 ACCOUNT_NAME=$(jq .$NETWORK.accounts[0].name fertilizer.json -r)
 ACCOUNT_MNEMONIC=$(jq .$NETWORK.accounts[0].mnemonic fertilizer.json -r)
 WORKSPACE_TMPL=https://github.com/Finschia/cw-workspace.git
-CONTRACTS_TMPL=$(jq .$NETWORK.accounts[0].contract_tmplate fertilizer.json -r)
-# CONFIGJSON="{\"default\":{\"gas_price\":\"\",\"gas_adjustment\":\"\",\"chain_id\":\"\",\"rpc_endpoint\":\"\",\"faucet_denom\":\"\",\"faucet_endpoint\":\"\",\"chaind\":\"\",\"accounts\":[{\"name\":\"\",\"mnemonic\":\"\"}]}}"
+CONTRACTS_TMPL=$(jq .$NETWORK.contract_tmplate fertilizer.json -r)
+# CONFIGJSON="{\"gas_price\":\"\",\"gas_adjustment\":\"\",\"chain_id\":\"\",\"rpc_endpoint\":\"\",\"faucet_denom\":\"\",\"faucet_endpoint\":\"\",\"chaind\":\"\",\"accounts\":[{\"name\":\"\",\"mnemonic\":\"\"}]}"
 
 CHAIND_HOME=$HOME/.fertilizer/$CHAIN_ID
 TMP_HOME=$CHAIND_HOME/tmp
