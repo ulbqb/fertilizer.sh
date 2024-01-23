@@ -13,6 +13,28 @@ tx() {
   echo "{}" | jq '.tx_id="'$TX_ID'" | .logs='"$(query query tx $TX_ID -o json | jq .logs)"
 }
 
+case $1 in
+  "new")
+    case $2 in
+      "finschia")
+        cargo generate --git https://github.com/Finschia/cw-workspace.git
+        ;;
+      "osmosis")
+        echo "not supported yet"
+        exit 0
+        ;;
+      "common")
+        echo "not supported yet"
+        exit 0
+        ;;
+      *)
+        echo "not found chain platform"
+        ;;
+    esac
+    exit 0
+    ;;
+esac
+
 NETWORK=default
 GAS_PRICE=$(jq .$NETWORK.gas_price fertilizer.json -r)
 GAS_ADJUSTMENT=$(jq .$NETWORK.gas_adjustment fertilizer.json -r)
@@ -23,7 +45,6 @@ FAUCET_ENDPOINT=$(jq .$NETWORK.faucet_endpoint fertilizer.json -r)
 CHAIND=$(jq .$NETWORK.chaind fertilizer.json -r)
 ACCOUNT_NAME=$(jq .$NETWORK.accounts[0].name fertilizer.json -r)
 ACCOUNT_MNEMONIC=$(jq .$NETWORK.accounts[0].mnemonic fertilizer.json -r)
-WORKSPACE_TMPL=https://github.com/Finschia/cw-workspace.git
 CONTRACTS_TMPL=$(jq .$NETWORK.contract_tmplate fertilizer.json -r)
 # CONFIGJSON="{\"gas_price\":\"\",\"gas_adjustment\":\"\",\"chain_id\":\"\",\"rpc_endpoint\":\"\",\"faucet_denom\":\"\",\"faucet_endpoint\":\"\",\"chaind\":\"\",\"accounts\":[{\"name\":\"\",\"mnemonic\":\"\"}]}"
 
@@ -54,9 +75,6 @@ case $1 in
       --data '{"denom":"'${FAUCET_DENOM}'","address":"'${ADDRESS}'"}' \
       ${FAUCET_ENDPOINT} > /dev/null
     query query bank balances ${ADDRESS}
-    ;;
-  "new")
-    cargo generate --git $WORKSPACE_TMPL
     ;;
   "wasm")
     case $2 in
